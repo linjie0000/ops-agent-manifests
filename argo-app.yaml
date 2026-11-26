@@ -9,7 +9,7 @@ spec:
   project: default
   source:
     # 替换为你自己的本地 Git 仓库地址或 GitHub 地址
-    repoURL: 'https://github.com/your-username/ops-agent-manifests.git' 
+    repoURL: 'https://github.com/linjie0000/ops-agent-manifests.git' 
     targetRevision: HEAD
     path: k8s               # 监听 k8s 文件夹
   destination:
