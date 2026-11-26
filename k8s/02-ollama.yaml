@@ -1,0 +1,70 @@
+# k8s/02-ollama.yaml
+# ================= 1. 持久化存储 =================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ollama-pvc
+spec:
+  accessModes: ["ReadWriteOnce"]  # 数据流转：允许多个 Pod 读写
+  resources:
+    requests:
+      storage: 20Gi              # 数据流转：分配 50G 存储给模型权重
+---
+# ================= 2. 部署资源 =================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ollama
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ollama
+  template:
+    metadata:
+      labels:
+        app: ollama
+    spec:
+      containers:
+      - name: ollama
+        image: ollama/ollama:0.6.5
+        imagePullPolicy: IfNotPresent # 数据流转：优先用本地镜像，避免每次都去远端拉取
+        ports:
+        - containerPort: 11434
+        env:
+        - name: OLLAMA_HOST
+          value: "0.0.0.0:11434"
+        - name: OLLAMA_KEEP_ALIVE
+          value: "30m"
+        resources:
+          limits:
+            # 数据流转：Ollama 计算密集型，显式限制 CPU 和内存，防止节点雪崩
+            memory: "6Gi"
+            cpu: "4"
+            # 如果 K8s 节点有 GPU，需在此处申请：
+            # nvidia.com/gpu: 1
+        volumeMounts:
+        - name: ollama-data
+          mountPath: /root/.ollama # 数据流转：将容器内模型路径挂载到宿主机 PVC(用kubectl cp讲本地的拷贝进pod，因为bind挂载了所有模型会落到本地磁盘，pod重启不会消失)
+        readinessProbe: # 就绪探针：决定这个 Pod "能不能接流量"
+          # 数据流转：探测 /api/tags，就绪后 Service 才会把流量转发进来
+          httpGet:  #探测方式：发一个 HTTP GET 请求
+            path: /api/tags  #请求路径 
+            port: 11434  #请求端口（容器内端口，不是 Service 端口）
+          initialDelaySeconds: 30 # 容器启动后先等 30 秒，再开始探
+      volumes:
+      - name: ollama-data
+        persistentVolumeClaim:
+          claimName: ollama-pvc
+---
+# ================= 3. 内部服务 =================
+apiVersion: v1
+kind: Service
+metadata:
+  name: ollama-svc
+spec:
+  selector:
+    app: ollama
+  ports:
+    - port: 11434
+      targetPort: 11434

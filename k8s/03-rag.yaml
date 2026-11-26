@@ -1,0 +1,42 @@
+# k8s/03-rag.yaml
+# 数据流转：Agent 通过 http://rag-svc:8100 访问此服务，通过标签选择器路由到 Pod
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rag-service
+spec:
+  replicas: 2 # 数据流转：无状态服务，部署 2 个副本实现高可用
+  selector:
+    matchLabels:
+      app: rag-service
+  template:
+    metadata:
+      labels:
+        app: rag-service
+    spec:
+      containers:
+      - name: rag
+        image: 17-rag-service:latest # 注意：生产环境这里通常填私有镜像仓库如 harbor.company.com/ai/ops-rag:v1.0
+        imagePullPolicy: IfNotPresent # 数据流转：优先用本地镜像，避免每次都去远端拉取
+        ports:
+        - containerPort: 8100
+        envFrom:
+        - configMapRef:
+            name: agent-config
+        readinessProbe: # 就绪探针：决定这个 Pod "能不能接流量"
+          # 数据流转：健康检查通过后，Service 才会把 Agent 的请求转发给这个 Pod
+          httpGet:  #探测方式：发一个 HTTP GET 请求
+            path: /health #请求路径 
+            port: 8100 #请求端口（容器内端口，不是 Service 端口）
+          initialDelaySeconds: 5 # 容器启动后先等 5 秒，再开始探
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rag-svc
+spec:
+  selector:
+    app: rag-service
+  ports:
+    - port: 8100
+      targetPort: 8100

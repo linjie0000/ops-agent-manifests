@@ -1,0 +1,65 @@
+# k8s/05-agent.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ops-agent
+spec:
+  replicas: 1 # 数据流转：因为 ContextManager 依赖内存，暂不支持多副本（需外置 Redis 才能扩缩容）
+  selector:
+    matchLabels:
+      app: ops-agent
+  template:
+    metadata:
+      labels:
+        app: ops-agent
+    spec:
+      serviceAccountName: ops-agent-sa # 数据流转：将 RBAC 权限注入 Pod，沙盒里的 kubectl 自动生效
+      containers:
+      - name: agent
+        image: 17-ops-agent:v2        # 改成带前缀的真实名字
+        imagePullPolicy: IfNotPresent     # 关键：别让它去拉
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: agent-config
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"   # 数据流转：HPA 计算基准，250m = 0.25 核
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        # 数据流转：挂载一个临时 EmptyDir，用来存放 Agent 本地产生的排障日志
+        volumeMounts:
+        - name: agent-logs
+          mountPath: /app/logs
+        readinessProbe:
+          # 数据流转：探测 /health，通过后才接入流量
+          httpGet:  #探测方式：发一个 HTTP GET 请求
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10  # pod启动后10s才开始探测
+        livenessProbe:
+          # 数据流转：如果服务卡死（死锁），探针失败后 K8s 会自动重启容器
+          httpGet:  #探测方式：发一个 HTTP GET 请求
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+      volumes:
+      - name: agent-logs
+        emptyDir: {}  #pod删除磁盘数据也被删除
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ops-agent-svc
+spec:
+  type: NodePort          # type 大写没问题，但 nodePort 必须小写 n
+  selector:
+    app: ops-agent
+  ports:
+    - port: 8000
+      targetPort: 8000
+      nodePort: 30081 # 如果集群没有 LoadBalancer，用 NodePort 暴露给外部调试
