@@ -1,23 +1,55 @@
 # 📄 位置：ops-agent-manifests/argo-app.yaml
 # 数据流转：ArgoCD 读取此文件，绑定 Git 仓库路径与 K8s 目标状态
-apiVersion: argoproj.io/v1alpha1
-kind: Application
+#声明 “要部署什么、从哪来、到哪去”
+apiVersion: argoproj.io/v1alpha1     # ① ArgoCD 自己的 CRD 组
+kind: Application                    # ② 声明类型：一个"部署单元"
 metadata:
-  name: ops-agent
-  namespace: argocd
+  name: ops-agent                    # ③ 应用名，ArgoCD UI 里显示的名字
+  namespace: argocd                  # ④ 必须放 argocd 命名空间
 spec:
-  project: default
+  project: default                   # ⑤ 归属的 AppProject（权限边界）
   source:
-    # 替换为你自己的本地 Git 仓库地址或 GitHub 地址
-    repoURL: 'https://github.com/linjie0000/ops-agent-manifests.git' 
-    targetRevision: HEAD
-    path: k8s               # 监听 k8s 文件夹
+    repoURL: 'https://github.com/linjie0000/ops-agent-manifests.git'   # ⑥ 源仓库
+    targetRevision: HEAD             # ⑦ 跟哪个版本（分支/tag/commit）
+    path: k8s                        # ⑧ 仓库里的子目录，相当于cd k8s/
   destination:
-    server: 'https://kubernetes.default.svc'
-    namespace: default
+    server: 'https://kubernetes.default.svc'   # ⑨ 部署到哪个集群，部署到 ArgoCD 自己所在的那个集群
+    namespace: default               # ⑩ 部署到哪个命名空间
+  # 👇 核心：忽略特定字段的差异。告诉 ArgoCD：**对某些资源的某些字段，集群里的值与 Git 里的值不一致时，不要判定为 OutOfSync，也不要执行 selfHeal 覆盖回去**。
+  ignoreDifferences:
+  # 1. 忽略副本数（因为 HPA 会根据负载动态调整，ArgoCD 不要去管）
+  - group: apps   #资源所属的 API Group 
+    kind: Deployment  #资源类型
+    jsonPointers:  #用 JSON Pointer 语法定位字段
+    - /spec/replicas  #具体路径
+  # 2. 忽略 K8s 自动注入的默认值（比如探针、资源限制的默认微调）
+  - group: apps
+    kind: Deployment
+    jqPathExpressions:  #用 jq 表达式定位（支持数组和条件筛选）
+    - '.spec.template.spec.containers[] | select(.name == "agent") | .resources'
   syncPolicy:
     automated:
-      prune: true           # 如果 Git 里删除了 04-rbac.yaml，K8s 里对应的资源也自动清理
-      selfHeal: true        # 核心：如果有人手动 kubectl edit 修改了线上配置，自动覆盖恢复
+      prune: true                    # ⑪ Git 里删掉的资源，集群里也删。如果 Git 里删除了 04-rbac.yaml，K8s 里对应的资源也自动清理
+      selfHeal: true                 # ⑫ 集群被手改，自动改回 Git 状态。核心：如果有人手动 kubectl edit 修改了线上配置，自动覆盖恢复
     syncOptions:
-      - CreateNamespace=true
+      - CreateNamespace=true            # 作用：确保目标命名空间存在，没有就创建
+      - RespectIgnoreDifferences=true   # 作用：同步时跳过 ignoreDifferences 里列的字段，修改其他参数触发同步也会跳过该字段
+
+#相当于在本地执行
+#git clone https://github.com/linjie0000/ops-agent-manifests.git
+#cd ops-agent-manifests
+#git checkout main
+#cd k8s
+#kubectl --server https://kubernetes.default.svc -n default apply -f .
+
+#'.spec.template.spec.containers[] | select(.name == "agent") | .resources'相当于忽略
+#containers:
+#  - name: agent            # ← 名字要对上
+#    image: ops-agent:v1
+#    resources:             # ← 被忽略的整个块
+#      requests:
+#        cpu: "250m"
+#        memory: 512Mi
+#      limits:
+#        cpu: "1"
+#        memory: 2Gi

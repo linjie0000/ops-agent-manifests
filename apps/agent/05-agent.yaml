@@ -14,10 +14,12 @@ spec:
         app: ops-agent
     spec:
       serviceAccountName: ops-agent-sa # 数据流转：将 RBAC 权限注入 Pod，沙盒里的 kubectl 自动生效
+      imagePullSecrets:
+      - name: registry-auth            # 数据流转：ArgoCD 部署出的 Pod 会使用此凭证拉取本地 Harbor 镜像，如果仓库需要登录到该secrets中拿
       containers:
       - name: agent
         image: 17-ops-agent:v2        # 改成带前缀的真实名字
-        imagePullPolicy: IfNotPresent     # 关键：别让它去拉
+        imagePullPolicy: IfNotPresent     # 关键：别让它去拉（节点本地有没有这个完整名字的镜像）
         ports:
         - containerPort: 8000
         envFrom:
